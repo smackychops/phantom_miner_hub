@@ -1,0 +1,233 @@
+---
+title: '`r res$search`'
+author: "PubMedMine Report"
+date: '`r Sys.Date()`'
+output:
+  word_document: default
+  pdf_document:
+    toc: no
+    number_sections: yes
+  html_document:
+    toc: yes
+---
+
+
+```{r selfbuild,eval=FALSE,include=FALSE}
+library(rmarkdown)
+library(openssl)
+load("rd/fb73c70fe8d5ae64a373f7ce7df2d483_res.rd")
+options(bitmapType='cairo')
+render("report.Rmd",output_file=paste0("report_",md5(res$search),".html"),output_format="html_document")
+```
+
+```{r setup, include=FALSE}
+library(data.table)
+library(ggplot2)
+library(handy)
+library(knitr)
+library(gtools)
+library(stringr)
+knitr::opts_chunk$set(cache=FALSE)
+knitr::opts_chunk$set(eval=TRUE)
+knitr::opts_chunk$set(include=FALSE)
+knitr::opts_chunk$set(warning=FALSE)
+knitr::opts_chunk$set(echo=FALSE)
+```
+
+# Trends
+
+## By Year
+
+```{r plot-year,include=TRUE}
+ggplot(res$year,aes(x=year,y=papers)) + geom_point() + geom_line() + ggnice()
+```
+
+## By Institution
+
+```{r kable-inst,include=TRUE}
+res$aff <- data.table(res$aff)
+kable(head(res$aff,15),format.args = list(big.mark = ","))
+```
+
+## By Country
+
+```{r kable-count,include=TRUE}
+res$country <- data.table(res$country)
+kable(head(res$country,15),format.args = list(big.mark = ","))
+```
+
+## By Journal
+
+```{r plot-journal,include=TRUE}
+dt <- data.table(res$journal)
+dt <- head(dt,15)
+dt$journal <- factor(dt$journal,levels=rev(dt$journal))
+ggplot(dt,aes(x=journal,y=papers)) + geom_bar(stat="identity") + coord_flip() + ggnice()
+```
+
+## By Grants
+
+Click grant ID to search on Grantome.org
+
+```{r kable-grants,include=TRUE}
+dt <- data.table(res$grants)
+
+dt$name <- paste0("<a href=\"http://grantome.com/search?q=",dt$name,"\">",dt$name,"</a>")
+
+kable(head(dt,15),format.args = list(big.mark = ","))
+```
+
+## By Citation Count (in PMC)
+
+### Citation Distribution
+
+```{r plot-cites,include=TRUE}
+ggplot(res$citation,aes(x=pmc_cites)) + geom_histogram(binwidth=10) + ggnice()
+```
+
+### Most Cited Papers
+
+Click PMID to view PubMed record
+
+```{r kable-cited,include=TRUE}
+dt <- res$citation
+dt$pmid <- paste0("<a href=\"http://www.ncbi.nlm.nih.gov/pubmed/",dt$pmid,"\">",dt$pmid,"</a>")
+kable(head(dt,15))
+```
+
+# Authorship Network
+
+## By Authors
+
+### All Authors
+```{r plot-aut-all,include=TRUE}
+dt <- data.table(res$authors)
+dt <- head(dt,20)
+dt$papers <- as.integer(dt$papers)
+dt$name <- factor(dt$name,levels=rev(dt$name))
+ggplot(dt,aes(x=name,y=papers)) + geom_bar(stat="identity") + coord_flip() + ggnice()
+```
+
+### First Authors
+```{r plot-aut-first,include=TRUE}
+dt <- data.table(res$authors_first)
+dt <- head(dt,20)
+dt$papers <- as.integer(dt$papers)
+dt$name <- factor(dt$name,levels=rev(dt$name))
+ggplot(dt,aes(x=name,y=papers)) + geom_bar(stat="identity") + coord_flip() + ggnice()
+```
+
+### Last Authors
+```{r plot-aut-last,include=TRUE}
+dt <- data.table(res$authors_last)
+dt <- head(dt,20)
+dt$name <- factor(dt$name,levels=rev(dt$name))
+dt$papers <- as.integer(dt$papers)
+ggplot(dt,aes(x=name,y=papers)) + geom_bar(stat="identity") + coord_flip() + ggnice()
+```
+
+### Author Pairs
+
+```{r kable-aut-pairs,include=TRUE}
+dt <- res$author_pairs
+kable(head(dt,15))
+```
+
+### Author Trios
+
+```{r kable-aut-trios,include=TRUE}
+dt <- res$author_trios
+kable(head(dt,15))
+```
+
+### Author Network
+```{r aut-net,include=TRUE}
+# Build edgelist and nodelist
+library(igraph)
+nl <- data.table(res$authors)
+el <- res$author_pairs
+ig <- graph.data.frame(el, directed=FALSE)
+#ig <- delete_vertices(ig,10:length(degree(ig)))
+#table((nl$name %in% el$V1)|(nl$name %in% el$V2))
+#nl <- nl[papers>3,]
+#nl <- head(nl,10)
+#el <- el[(V1 %in% nl$name) & (V2 %in% nl$name),]
+#niet <- network(el,directed=FALSE)
+
+deg <- igraph::degree(ig, mode="all")
+V(ig)$size <- log(deg)
+V(ig)$label <- NA
+
+# Set edge width based on weight:
+E(ig)$width <- log(E(ig)$papers)
+
+#plot(ig)
+
+dt <- data.table(author=names(deg),degree=deg)
+dt <- dt[order(dt$degree,decreasing=T),]
+kable(head(dt,10))
+```
+
+# Content Summary
+
+## By MESH Terms
+
+```{r mesh,include=TRUE}
+dt <- data.table(res$mesh)
+dt <- dt[!(dt$mesh %in% c("Humans","Animals","Mice","Male","Female")),]
+
+library(tm)
+library(SnowballC)
+library(wordcloud)
+library(RColorBrewer) 
+colors <- brewer.pal(8, "Dark2")
+set.seed(1234)
+wordcloud(dt$mesh,dt$Freq,max.words=50, random.order=FALSE, rot.per=0.25,use.r.layout=FALSE, colors=colors)
+
+kable(head(dt,10))
+```
+
+## MESH Term Network
+```{r mesh-pairs,include=TRUE}
+ig <- graph.data.frame(res$mesh_pairs, directed=FALSE)
+#ig <- delete_vertices(ig,10:length(degree(ig)))
+#table((nl$name %in% el$V1)|(nl$name %in% el$V2))
+#nl <- nl[papers>3,]
+#nl <- head(nl,10)
+#el <- el[(V1 %in% nl$name) & (V2 %in% nl$name),]
+#niet <- network(el,directed=FALSE)
+
+deg <- igraph::degree(ig, mode="all")
+V(ig)$size <- log(deg)
+V(ig)$label <- NA
+
+# Set edge width based on weight:
+#E(ig)$width <- log(E(ig)$papers)
+
+#plot(ig)
+```
+
+### MESH Term Degrees
+
+```{r mes-deg,include=TRUE}
+dt <- data.table(term=names(deg),degree=deg)
+dt <- dt[order(dt$degree,decreasing=T),]
+kable(head(dt,10))
+```
+
+### MESH Pairs
+```{r mesh-pairs-tab,include=TRUE}
+kable(head(res$mesh_pairs,15))
+```
+
+## Abstract Wordcloud
+```{r abs,include=TRUE}
+dt <- data.table(res$abswc)
+dt <- dt[!(dt$term %in% c("the","this","Humans","Animals","Mice","Male","Female")),]
+
+set.seed(1234)
+wordcloud(dt$term,dt$n,max.words=50, random.order=FALSE, rot.per=0.25,use.r.layout=FALSE, colors=colors)
+
+kable(head(dt,10))
+```
+
